@@ -32,6 +32,7 @@ import string
 import h5py
 import numpy as np
 from scipy.misc import imread, imresize
+import re
 
 def prepro_captions(imgs):
   
@@ -95,16 +96,18 @@ def build_vocab(imgs, params):
   return vocab
 
 def assign_splits(imgs, params):
+  rrr = re.compile(r'COCO_(\w+)2014_\d+\.jpg')
   num_val = params['num_val']
   num_test = params['num_test']
 
   for i,img in enumerate(imgs):
-      if i < num_val:
-        img['split'] = 'val'
-      elif i < num_val + num_test: 
-        img['split'] = 'test'
-      else: 
-        img['split'] = 'train'
+       img['split'] = rrr.findall(img['file_path'])[0]
+#      if i < num_val:
+#        img['split'] = 'val'
+#      elif i < num_val + num_test: 
+#        img['split'] = 'test'
+#      else: 
+#        img['split'] = 'train'
 
   print 'assigned %d to val, %d to test.' % (num_val, num_test)
 

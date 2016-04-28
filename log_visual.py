@@ -4,23 +4,25 @@ import matplotlib.pyplot as plt
 import json
 import sys
 import os
+import re
 
 startx = 0
-dirname = sys.argv[1]
-dirs = [dirname]
+filename = sys.argv[1]
+dirs = [filename]
+rrr = re.compile(r'\.t7$')
 if not(len(sys.argv) > 2 and sys.argv[2] == '-n'):
-    while dirname:
-        data = json.load(open(os.path.join(dirname,'model_id.json')))
-        dirname = os.path.dirname(data['opt']['start_from'])
-        if dirname and dirname not in dirs and os.path.exists(os.path.join(dirname,'model_id.json')):
-            dirs.append(dirname)
+    while filename:
+        data = json.load(open(filename))
+        filename = rrr.sub('.json',data['opt']['start_from'])
+        if filename and filename not in dirs and os.path.exists(filename):
+            dirs.append(filename)
         else:
             break
     dirs.reverse()
 print(dirs)
 
-for dirname in dirs:
-    data = json.load(open(os.path.join(dirname,'model_id.json')))
+for filename in dirs:
+    data = json.load(open(filename))
     val_name = ["CIDEr","Bleu_1","Bleu_2","Bleu_3","Bleu_4","METEOR","ROUGE_L"]
     val_data = data["val_lang_stats_history"]
     val_data = sorted(val_data.items(),key=lambda t:int(t[0]))

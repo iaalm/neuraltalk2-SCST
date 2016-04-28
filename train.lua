@@ -312,6 +312,11 @@ while true do
     end
 
     local checkpoint_path = path.join(opt.checkpoint_path, 'model_id' .. opt.id)
+    if(path.exists(opt.checkpoint_path)) then
+      print('Warning: checkpoint_path exists !')
+    else
+      path.mkdir(opt.checkpoint_path)
+    end
 
     -- write a (thin) json report
     local checkpoint = {}
