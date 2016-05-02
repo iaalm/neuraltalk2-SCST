@@ -76,6 +76,12 @@ local opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 torch.setdefaulttensortype('torch.FloatTensor') -- for CPU
 
+local checkpoint_path = path.join(opt.checkpoint_path, 'model_id' .. opt.id)
+if (path.exists(checkpoint_path .. '.json')) then
+  print('logfile ' .. checkpoint_path .. '.json exists !')
+  os.exit(1)
+end
+
 if opt.gpuid >= 0 then
   require 'cutorch'
   require 'cunn'
@@ -311,10 +317,6 @@ while true do
       val_lang_stats_history[iter] = lang_stats
     end
 
-    local checkpoint_path = path.join(opt.checkpoint_path, 'model_id' .. opt.id)
-    if(not path.exists(opt.checkpoint_path)) then
-      path.mkdir(opt.checkpoint_path)
-    end
 
     -- write a (thin) json report
     local checkpoint = {}
