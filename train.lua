@@ -76,7 +76,7 @@ local opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 torch.setdefaulttensortype('torch.FloatTensor') -- for CPU
 
-local checkpoint_path = path.join(opt.checkpoint_path, 'model_id' .. opt.id)
+local checkpoint_path = path.join(opt.checkpoint_path, 'model_' .. opt.id)
 if (path.exists(checkpoint_path .. '.json')) then
   print('logfile ' .. checkpoint_path .. '.json exists !')
   os.exit(1)
