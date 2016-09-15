@@ -66,6 +66,8 @@ cmd:option('-id', '', 'an id identifying this run/job. used in cross-val and app
 cmd:option('-seed', 123, 'random number generator seed to use')
 cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
 
+cmd:option('-distrub_lable', 0, 'distrub lable')
+
 cmd:text()
 
 -------------------------------------------------------------------------------
@@ -237,7 +239,7 @@ local function lossFun()
   -- Forward pass
   -----------------------------------------------------------------------------
   -- get batch of data  
-  local data = loader:getBatch{batch_size = opt.batch_size, split = 'train', seq_per_img = opt.seq_per_img}
+  local data = loader:getBatch{batch_size = opt.batch_size, split = 'train', seq_per_img = opt.seq_per_img, distrub_lable = opt.distrub_lable}
   data.images = net_utils.prepro(data.images, true, opt.gpuid >= 0) -- preprocess in place, do data augmentation
   -- data.images: Nx3x224x224 
   -- data.seq: LxM where L is sequence length upper bound, and M = N*seq_per_img

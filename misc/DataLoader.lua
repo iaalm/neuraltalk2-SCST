@@ -79,6 +79,7 @@ function DataLoader:getBatch(opt)
   local split = utils.getopt(opt, 'split') -- lets require that user passes this in, for safety
   local batch_size = utils.getopt(opt, 'batch_size', 5) -- how many images get returned at one time (to go through CNN)
   local seq_per_img = utils.getopt(opt, 'seq_per_img', 5) -- number of sequences to return per image
+  local distrub_lable = utils.getopt(opt, 'distrub_lable', 0) -- number of sequences to return per image
 
   local split_ix = self.split_ix[split]
   assert(split_ix, 'split ' .. split .. ' not found.')
@@ -120,6 +121,16 @@ function DataLoader:getBatch(opt)
       -- there is enough data to read a contiguous chunk, but subsample the chunk position
       local ixl = torch.random(ix1, ix2 - seq_per_img + 1) -- generates integer in the range
       seq = self.h5_file:read('/labels'):partial({ixl, ixl+seq_per_img-1}, {1,self.seq_length})
+    end
+    for i=1,seq_per_img do
+      for j=1, self.seq_length do
+        if seq[i][j] == 0 then
+          break
+        end
+        if torch.random(1000) <= 1000*distrub_lable then
+          seq[i][j] = torch.random(self.vocab_size)
+        end
+      end
     end
     local il = (i-1)*seq_per_img+1
     label_batch[{ {il,il+seq_per_img-1} }] = seq
