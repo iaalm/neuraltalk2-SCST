@@ -67,6 +67,7 @@ cmd:option('-seed', 123, 'random number generator seed to use')
 cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
 
 cmd:option('-distrub_lable', 0, 'distrub lable')
+cmd:option('-beam_size', 1, 'beam search size')
 
 cmd:text()
 
@@ -193,7 +194,7 @@ local function eval_split(split, evalopt)
     loss_evals = loss_evals + 1
 
     -- forward the model to also get generated samples for each image
-    local seq = protos.lm:sample(feats)
+    local seq = protos.lm:sample(feats, {beam_size=opt.beam_size})
     local sents = net_utils.decode_sequence(vocab, seq)
     for k=1,#sents do
       local entry = {image_id = data.infos[k].id, caption = sents[k]}
