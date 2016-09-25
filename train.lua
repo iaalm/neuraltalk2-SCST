@@ -69,6 +69,7 @@ cmd:option('-num_lstm', 1, 'how many LSTM layers')
 
 cmd:option('-distrub_lable', 0, 'distrub lable')
 cmd:option('-beam_size', 1, 'beam search size')
+cmd:option('-rnn_type', 'lstm', 'rnn type: lstm or gru')
 
 cmd:text()
 
@@ -124,6 +125,7 @@ else
   lmOpt.dropout = opt.drop_prob_lm
   lmOpt.seq_length = loader:getSeqLength()
   lmOpt.batch_size = opt.batch_size * opt.seq_per_img
+  lmOpt.rnn_type = opt.rnn_type
   protos.lm = nn.LanguageModel(lmOpt)
   -- initialize the ConvNet
   local cnn_backend = opt.backend
