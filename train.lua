@@ -65,11 +65,12 @@ cmd:option('-backend', 'cudnn', 'nn|cudnn')
 cmd:option('-id', '', 'an id identifying this run/job. used in cross-val and appended when writing progress files')
 cmd:option('-seed', 123, 'random number generator seed to use')
 cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
-cmd:option('-num_lstm', 1, 'how many LSTM layers')
+cmd:option('-num_rnn', 1, 'how many LSTM layers')
 
 cmd:option('-distrub_lable', 0, 'distrub lable')
 cmd:option('-beam_size', 1, 'beam search size')
 cmd:option('-rnn_type', 'lstm', 'rnn type: lstm or gru')
+cmd:option('-res_rnn', 0, 'rnn type: lstm or gru')
 
 cmd:text()
 
@@ -121,11 +122,12 @@ else
   lmOpt.vocab_size = loader:getVocabSize()
   lmOpt.input_encoding_size = opt.input_encoding_size
   lmOpt.rnn_size = opt.rnn_size
-  lmOpt.num_layers = opt.num_lstm
+  lmOpt.num_layers = opt.num_rnn
   lmOpt.dropout = opt.drop_prob_lm
   lmOpt.seq_length = loader:getSeqLength()
   lmOpt.batch_size = opt.batch_size * opt.seq_per_img
   lmOpt.rnn_type = opt.rnn_type
+  lmOpt.res_rnn = (opt.res_rnn == 1)
   protos.lm = nn.LanguageModel(lmOpt)
   -- initialize the ConvNet
   local cnn_backend = opt.backend

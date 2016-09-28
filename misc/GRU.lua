@@ -2,7 +2,7 @@ require 'nn'
 require 'nngraph'
 
 local GRU = {}
-function GRU.gru(input_size, output_size, rnn_size, n, dropout)
+function GRU.gru(input_size, output_size, rnn_size, n, dropout, res_rnn)
   dropout = dropout or 0 
 
   -- there will be 2*n+1 inputs
@@ -24,7 +24,11 @@ function GRU.gru(input_size, output_size, rnn_size, n, dropout)
       x = inputs[1]
       input_size_L = input_size
     else 
-      x = outputs[(L-1)*2] 
+      if res_rnn and L > 2 then
+        x = nn.CAddTable()({outputs[(L-1)*2] + outputs[(L-2)*2]})
+      else
+        x = outputs[(L-1)*2] 
+      end 
       if dropout > 0 then x = nn.Dropout(dropout)(x):annotate{name='drop_' .. L} end -- apply dropout, if any
       input_size_L = rnn_size
     end
