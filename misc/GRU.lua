@@ -25,7 +25,7 @@ function GRU.gru(input_size, output_size, rnn_size, n, dropout, res_rnn)
       input_size_L = input_size
     else 
       if res_rnn and L > 2 then
-        x = nn.CAddTable()({outputs[(L-1)*2] + outputs[(L-2)*2]})
+        x = nn.CAddTable()({outputs[(L-1)*2], outputs[(L-2)*2]})
       else
         x = outputs[(L-1)*2] 
       end 
@@ -50,10 +50,11 @@ function GRU.gru(input_size, output_size, rnn_size, n, dropout, res_rnn)
 
     local h_hat = nn.Tanh()(nn.CAddTable()({i2o, h2o}))
     -- perform the LSTM update
-    local next_h           = nn.CAddTable()({
+    local next_h_raw           = nn.CAddTable()({
         nn.CMulTable()({not_update_gate, prev_h}),
         nn.CMulTable()({update_gate,     h_hat})
       })
+    local next_h = nn.Tanh()(next_h_raw)
     
     table.insert(outputs, prev_c)
     table.insert(outputs, next_h)
