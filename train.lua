@@ -127,7 +127,7 @@ else
   lmOpt.seq_length = loader:getSeqLength()
   lmOpt.batch_size = opt.batch_size * opt.seq_per_img
   lmOpt.rnn_type = opt.rnn_type
-  lmOpt.res_rnn = (opt.res_rnn == 1)
+  lmOpt.res_rnn = opt.res_rnn
   protos.lm = nn.LanguageModel(lmOpt)
   -- initialize the ConvNet
   local cnn_backend = opt.backend

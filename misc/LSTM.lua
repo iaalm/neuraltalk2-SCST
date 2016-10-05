@@ -24,8 +24,8 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, res_rnn)
       x = inputs[1]
       input_size_L = input_size
     else 
-      if res_rnn and L > 2 then
-        x = nn.CAddTable()({outputs[(L-1)*2], outputs[(L-2)*2]})
+      if res_rnn > 0 and L > res_rnn + 1 and (L - 2) % res_rnn == 0 then
+        x = nn.CAddTable()({outputs[(L-1)*2], outputs[(L-1-res_rnn)*2]})
       else
         x = outputs[(L-1)*2] 
       end
