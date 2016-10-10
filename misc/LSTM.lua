@@ -24,11 +24,7 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, res_rnn)
       x = inputs[1]
       input_size_L = input_size
     else 
-      if res_rnn > 0 and L > res_rnn + 1 and (L - 2) % res_rnn == 0 then
-        x = nn.CAddTable()({outputs[(L-1)*2], outputs[(L-1-res_rnn)*2]})
-      else
         x = outputs[(L-1)*2] 
-      end
       if dropout > 0 then x = nn.Dropout(dropout)(x):annotate{name='drop_' .. L} end -- apply dropout, if any
       input_size_L = rnn_size
     end
@@ -54,7 +50,11 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, res_rnn)
     local next_h = nn.CMulTable()({out_gate, nn.Tanh()(next_c)})
     
     table.insert(outputs, next_c)
-    table.insert(outputs, next_h)
+    if res_rnn > 0 and L > res_rnn and (L - 1) % res_rnn == 0 then
+      table.insert(outputs, nn.CAddTable()({next_h, outputs[(L-res_rnn)*2]}))
+    else
+      table.insert(outputs, next_h)
+    end
   end
 
   -- set up the decoder
