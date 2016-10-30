@@ -22,6 +22,7 @@ cmd:text('Options')
 
 -- Data input settings
 cmd:option('-input_h5','coco/data.h5','path to the h5file containing the preprocessed dataset')
+cmd:option('-input_val','annotations/captions_val2014.json','path to the json file containing caption for val')
 cmd:option('-input_json','coco/data.json','path to the json file containing additional info and vocab')
 cmd:option('-cnn_proto','model/VGG_ILSVRC_16_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
 cmd:option('-cnn_model','model/VGG_ILSVRC_16_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
@@ -229,7 +230,7 @@ local function eval_split(split, evalopt)
 
   local lang_stats
   if opt.language_eval == 1 then
-    lang_stats = net_utils.language_eval(predictions, opt.id)
+    lang_stats = net_utils.language_eval(predictions, opt.input_val, os.getenv('CUDA_VISIBLE_DEVICES'))
   end
 
   return loss_sum/loss_evals, predictions, lang_stats

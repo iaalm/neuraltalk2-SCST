@@ -3,6 +3,7 @@ local utils = require 'misc.utils'
 local net_utils = require 'misc.net_utils'
 local LSTM = require 'misc.LSTM'
 local GRU = require 'misc.GRU'
+local MUT = require 'misc.MUT'
 
 -------------------------------------------------------------------------------
 -- Language Model core
@@ -17,16 +18,29 @@ function layer:__init(opt)
   self.input_encoding_size = utils.getopt(opt, 'input_encoding_size')
   self.rnn_size = utils.getopt(opt, 'rnn_size')
   self.num_layers = utils.getopt(opt, 'num_layers', 1)
-  local dropout = utils.getopt(opt, 'dropout', 0)
+  local dropout_l = utils.getopt(opt, 'dropout_l', 0)
+  local dropout_t = utils.getopt(opt, 'dropout_t', 0)
   local rnn_type = utils.getopt(opt, 'rnn_type', 'lstm')
   local res_rnn = utils.getopt(opt, 'res_rnn', false)
   -- options for Language Model
   self.seq_length = utils.getopt(opt, 'seq_length')
   -- create the core lstm network. note +1 for both the START and END tokens
   if rnn_type == 'lstm' then
-    self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout, res_rnn)
+    self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn, 0, false, 0)
+  elseif rnn_type == 'lstmb' then
+    self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn, 0, false, 1)
+  elseif rnn_type == 'clstm' then
+    self.core = LSTM.clstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn, 0, false, 0.6)
+  elseif rnn_type == 'slstm' then
+    self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn, 0, true, 1)
+  elseif rnn_type == 'nlstm' then
+    self.core = LSTM.lstm(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn, 2, true, 0)
   elseif rnn_type == 'gru' then
-    self.core = GRU.gru(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout, res_rnn)
+    self.core = GRU.gru(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn, 0)
+  elseif rnn_type == 'mut1' then
+    self.core = MUT.mut1(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn)
+  elseif rnn_type == 'mut3' then
+    self.core = MUT.mut3(self.input_encoding_size, self.vocab_size + 1, self.rnn_size, self.num_layers, dropout_l, dropout_t, res_rnn)
   else
     assert(1==0, 'unsupport rnn type')
   end

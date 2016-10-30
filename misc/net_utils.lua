@@ -193,13 +193,15 @@ end
 
 -- hiding this piece of code on the bottom of the file, in hopes that
 -- noone will ever find it. Lets just pretend it doesn't exist
-function net_utils.language_eval(predictions, id)
+function net_utils.language_eval(predictions, ground_truth, id)
   -- this is gross, but we have to call coco python code.
   -- Not my favorite kind of thing, but here we go
   local out_struct = {val_predictions = predictions}
   utils.write_json('coco-caption/val' .. id .. '.json', out_struct) -- serialize to json (ew, so gross)
-  os.execute('./misc/call_python_caption_eval.sh val' .. id .. '.json') -- i'm dying over here
+  os.execute('./misc/call_python_caption_eval.sh val' .. id .. '.json ' .. ground_truth) -- i'm dying over here
   local result_struct = utils.read_json('coco-caption/val' .. id .. '.json_out.json') -- god forgive me
+  os.remove('coco-caption/val' .. id .. '.json_out.json')
+  os.remove('coco-caption/val' .. id .. '.json')
   return result_struct
 end
 

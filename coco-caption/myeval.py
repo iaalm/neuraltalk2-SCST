@@ -10,10 +10,9 @@ from json import encoder
 encoder.FLOAT_REPR = lambda o: format(o, '.3f')
 import sys
 
-input_json = sys.argv[1]
+annFile = sys.argv[1]
+input_json = sys.argv[2]
 
-
-annFile = 'annotations/captions_val2014.json'
 coco = COCO(annFile)
 valids = coco.getImgIds()
 
