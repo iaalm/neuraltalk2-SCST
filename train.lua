@@ -37,6 +37,7 @@ cmd:option('-max_iters', -1, 'max number of iterations to run for (-1 = run fore
 cmd:option('-batch_size',16,'what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 cmd:option('-grad_clip',0.1,'clip gradients at this value (note should be lower than usual 5 because we normalize grads by both batch and seq_length)')
 cmd:option('-drop_prob_lm', 0.5, 'strength of dropout in the Language Model RNN')
+cmd:option('-drop_prob_lm_t', 0, 'strength of dropout in the Language Model RNN')
 cmd:option('-finetune_cnn_after', -1, 'After what iteration do we start finetuning the CNN? (-1 = disable; never finetune, 0 = finetune from start)')
 cmd:option('-seq_per_img',5,'number of captions to sample for each image during training. Done for efficiency since CNN forward pass is expensive. E.g. coco has 5 sents/image')
 -- Optimization: for the Language Model
@@ -124,7 +125,8 @@ else
   lmOpt.input_encoding_size = opt.input_encoding_size
   lmOpt.rnn_size = opt.rnn_size
   lmOpt.num_layers = opt.num_rnn
-  lmOpt.dropout = opt.drop_prob_lm
+  lmOpt.dropout_l = opt.drop_prob_lm
+  lmOpt.dropout_t = opt.drop_prob_lm_t
   lmOpt.seq_length = loader:getSeqLength()
   lmOpt.batch_size = opt.batch_size * opt.seq_per_img
   lmOpt.rnn_type = opt.rnn_type
