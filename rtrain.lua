@@ -53,7 +53,7 @@ cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
 
 -- Evaluation/Checkpointing
 cmd:option('-val_images_use', 3200, 'how many images to use when periodically evaluating the validation loss? (-1 = all)')
-cmd:option('-save_checkpoint_every', 2500, 'how often to save a model checkpoint?')
+cmd:option('-save_checkpoint_every', 500, 'how often to save a model checkpoint?')
 cmd:option('-checkpoint_path', '', 'folder to save checkpoints into (empty = this folder)')
 cmd:option('-language_eval', 1, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
 cmd:option('-losses_log_every', 25, 'How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')
@@ -203,26 +203,26 @@ function simple_metric:eval(seq, label)
 	local S = seq:size(2)
   local gain = torch.Tensor(B)
 	assert(label:size(1) == B * 5 and label:size(2) == S)
-	local n = 2
-	for b=1,B do
+	local n = 4
+  for b=1,B do
     local count = 0
     local match = 0
-		for i=1,5 do
-			sent = label[b*5-5+i]
+    for i=1,5 do
+      sent = label[b*5-5+i]
       -- local vocab = loader:getVocab()
       -- print('--------------------------------------------')
       -- print(net_utils.decode_sequence(vocab, seq[b]:reshape(1, 16)))
       -- print(net_utils.decode_sequence(vocab, sent:reshape(1, 16)))
-			for j=1,seqLen(sent, Zvocab) - n + 1 do
-				if seqMatch(seq[b], sent, j, n) then
-					match = match + 1
-				end
-				count = count + 1
-			end
-		end
+      for j=1,seqLen(sent, Zvocab) - n + 1 do
+        if seqMatch(seq[b], sent, j, n) then
+          match = match + 1
+        end
+        count = count + 1
+      end
+    end
     gain[b] = match / count
-	end
-  return gain
+  end
+  return gain:div(B)
 end
 
 function policy_grad(gain, sample_seq)
@@ -362,7 +362,7 @@ local function lossFun()
   -------------------------------------------------------------------------------------
 
   local gain = sample_score - baseline_score
-  print(string.format("%f - %f = %f", sample_score:sum(), baseline_score:sum(), gain:sum()))
+  print(string.format("%f - %f = %f", sample_score:mean(), baseline_score:mean(), gain:mean()))
   local dlogprobs = policy_grad(gain, sample_seq)
   
   -----------------------------------------------------------------------------
@@ -388,7 +388,7 @@ local function lossFun()
   -----------------------------------------------------------------------------
 
   -- and lets get out!
-  local losses = { total_loss = gain:sum() }
+  local losses = { total_loss = gain:mean() }
   return losses
 end
 
