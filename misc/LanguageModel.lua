@@ -119,10 +119,14 @@ Returns: a DxN LongTensor with integer elements 1..M,
 where D is sequence length and N is batch (so columns are sequences)
 --]]
 function layer:sample(imgs, opt)
+  self.tmax = 0 -- we will keep track of max sequence length encountered in the data for efficiency
+  self.inputs = {}
+  self.lookup_tables_inputs = {}
   local sample_max = utils.getopt(opt, 'sample_max', 1)
   local beam_size = utils.getopt(opt, 'beam_size', 1)
   local temperature = utils.getopt(opt, 'temperature', 1.0)
   if sample_max == 1 and beam_size > 1 then return self:sample_beam(imgs, opt) end -- indirection for beam search
+  if self.clones == nil then self:createClones() end -- lazily create clones on first forward pass
 
   local batch_size = imgs:size(1)
   self:_createInitState(batch_size)
@@ -141,7 +145,8 @@ function layer:sample(imgs, opt)
     elseif t == 2 then
       -- feed in the start tokens
       it = torch.LongTensor(batch_size):fill(self.vocab_size+1)
-      xt = self.lookup_table:forward(it)
+      self.lookup_tables_inputs[t] = it
+      xt = self.lookup_tables[t]:forward(it)
     else
       -- take predictions from previous time step and feed them in
       if sample_max == 1 then
@@ -161,7 +166,8 @@ function layer:sample(imgs, opt)
         sampleLogprobs = logprobs:gather(2, it) -- gather the logprobs at sampled positions
         it = it:view(-1):long() -- and flatten indices for downstream processing
       end
-      xt = self.lookup_table:forward(it)
+      self.lookup_tables_inputs[t] = it
+      xt = self.lookup_tables[t]:forward(it)
     end
 
     if t >= 3 then 
@@ -169,11 +175,12 @@ function layer:sample(imgs, opt)
       seqLogprobs[t-2] = sampleLogprobs:view(-1):float() -- and also their log likelihoods
     end
 
-    local inputs = {xt,unpack(state)}
-    local out = self.core:forward(inputs)
+    self.inputs[t] = {xt,unpack(state)}
+    local out = self.clones[t]:forward(self.inputs[t])
     logprobs = out[self.num_state+1] -- last element is the output vector
     state = {}
     for i=1,self.num_state do table.insert(state, out[i]) end
+    self.tmax = t
   end
 
   -- return the samples and their log likelihoods

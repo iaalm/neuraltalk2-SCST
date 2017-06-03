@@ -24,9 +24,7 @@ cmd:text('Options')
 cmd:option('-input_h5','/s/coco/cocotalk.h5','path to the h5file containing the preprocessed dataset')
 cmd:option('-input_val','annotations/captions_val2014.json','path to the json file containing caption for val')
 cmd:option('-input_json','/s/coco/cocotalk.json','path to the json file containing additional info and vocab')
-cmd:option('-cnn_proto','model/VGG_ILSVRC_16_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
-cmd:option('-cnn_model','model/VGG_ILSVRC_16_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
-cmd:option('-start_from', '', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
+cmd:option('-start_from', 'model_.t7', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
 
 -- Model settings
 cmd:option('-rnn_size',512,'size of the rnn in number of hidden nodes in each layer')
@@ -34,12 +32,10 @@ cmd:option('-input_encoding_size',512,'the encoding size of each token in the vo
 
 -- Optimization: General
 cmd:option('-max_iters', 200000, 'max number of iterations to run for (-1 = run forever)')
-cmd:option('-batch_size',16,'what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
+cmd:option('-batch_size',32,'what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 cmd:option('-grad_clip',0.1,'clip gradients at this value (note should be lower than usual 5 because we normalize grads by both batch and seq_length)')
-cmd:option('-drop_prob_lm', 0.5, 'strength of dropout in the Language Model RNN')
-cmd:option('-drop_prob_lm_t', 0, 'strength of dropout in the Language Model RNN')
-cmd:option('-finetune_cnn_after', 10000, 'After what iteration do we start finetuning the CNN? (-1 = disable; never finetune, 0 = finetune from start)')
 cmd:option('-seq_per_img',5,'number of captions to sample for each image during training. Done for efficiency since CNN forward pass is expensive. E.g. coco has 5 sents/image')
+cmd:option('-finetune_cnn_after', -1, 'After what iteration do we start finetuning the CNN? (-1 = disable; never finetune, 0 = finetune from start)')
 -- Optimization: for the Language Model
 cmd:option('-optim','adam','what update to use? rmsprop|sgd|sgdmom|adagrad|adam')
 cmd:option('-learning_rate',4e-4,'learning rate')
@@ -64,20 +60,24 @@ cmd:option('-losses_log_every', 25, 'How often do we snapshot losses, for inclus
 
 -- misc
 cmd:option('-backend', 'cudnn', 'nn|cudnn')
-cmd:option('-id', '', 'an id identifying this run/job. used in cross-val and appended when writing progress files')
+cmd:option('-id', 'pg', 'an id identifying this run/job. used in cross-val and appended when writing progress files')
 cmd:option('-seed', 123, 'random number generator seed to use')
 cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
-cmd:option('-num_rnn', 1, 'how many LSTM layers')
 
 cmd:option('-distrub_lable', 0, 'distrub lable')
 cmd:option('-beam_size', 1, 'beam search size')
-cmd:option('-rnn_type', 'lstm', 'rnn type: lstm or gru')
-cmd:option('-res_rnn', 0, 'rnn type: lstm or gru')
 
 cmd:text()
 
 -------------------------------------------------------------------------------
--- Basic Torch initializations
+--   /$$$$$$           /$$   /$$           /$$$$$$$                        /$$    
+--  |_  $$_/          |__/  | $$          | $$__  $$                      | $$    
+--    | $$   /$$$$$$$  /$$ /$$$$$$        | $$  \ $$  /$$$$$$   /$$$$$$  /$$$$$$  
+--    | $$  | $$__  $$| $$|_  $$_/        | $$$$$$$/ |____  $$ /$$__  $$|_  $$_/  
+--    | $$  | $$  \ $$| $$  | $$          | $$____/   /$$$$$$$| $$  \__/  | $$    
+--    | $$  | $$  | $$| $$  | $$ /$$      | $$       /$$__  $$| $$        | $$ /$$
+--   /$$$$$$| $$  | $$| $$  |  $$$$/      | $$      |  $$$$$$$| $$        |  $$$$/
+--  |______/|__/  |__/|__/   \___/        |__/       \_______/|__/         \___/                               
 -------------------------------------------------------------------------------
 local task_hash = torch.random()
 print('task hash:', task_hash)
@@ -98,54 +98,25 @@ if opt.gpuid >= 0 then
   cutorch.manualSeed(opt.seed)
   cutorch.setDevice(opt.gpuid + 1) -- note +1 because lua is 1-indexed
 end
-
 -------------------------------------------------------------------------------
 -- Create the Data Loader instance
 -------------------------------------------------------------------------------
 local loader = DataLoader{h5_file = opt.input_h5, json_file = opt.input_json}
-
+local Zvocab = loader:getVocabSize()
 -------------------------------------------------------------------------------
 -- Initialize the networks
 -------------------------------------------------------------------------------
 local protos = {}
 
-if string.len(opt.start_from) > 0 then
-  -- load protos from file
-  print('initializing weights from ' .. opt.start_from)
-  local loaded_checkpoint = torch.load(opt.start_from)
-  protos = loaded_checkpoint.protos
-  net_utils.unsanitize_gradients(protos.cnn)
-  local lm_modules = protos.lm:getModulesList()
-  for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
-  protos.crit = nn.LanguageModelCriterion() -- not in checkpoints, create manually
-  protos.expander = nn.FeatExpander(opt.seq_per_img) -- not in checkpoints, create manually
-else
-  -- create protos from scratch
-  -- intialize language model
-  local lmOpt = {}
-  lmOpt.vocab_size = loader:getVocabSize()
-  lmOpt.input_encoding_size = opt.input_encoding_size
-  lmOpt.rnn_size = opt.rnn_size
-  lmOpt.num_layers = opt.num_rnn
-  lmOpt.dropout_l = opt.drop_prob_lm
-  lmOpt.dropout_t = opt.drop_prob_lm_t
-  lmOpt.seq_length = loader:getSeqLength()
-  lmOpt.batch_size = opt.batch_size * opt.seq_per_img
-  lmOpt.rnn_type = opt.rnn_type
-  lmOpt.res_rnn = opt.res_rnn
-  protos.lm = nn.LanguageModel(lmOpt)
-  -- initialize the ConvNet
-  local cnn_backend = opt.backend
-  if opt.gpuid == -1 then cnn_backend = 'nn' end -- override to nn if gpu is disabled
-  local cnn_raw = loadcaffe.load(opt.cnn_proto, opt.cnn_model, cnn_backend)
-  protos.cnn = net_utils.build_cnn(cnn_raw, {encoding_size = opt.input_encoding_size, backend = cnn_backend})
-  -- initialize a special FeatExpander module that "corrects" for the batch number discrepancy 
-  -- where we have multiple captions per one image in a batch. This is done for efficiency
-  -- because doing a CNN forward pass is expensive. We expand out the CNN features for each sentence
-  protos.expander = nn.FeatExpander(opt.seq_per_img)
-  -- criterion for the language model
-  protos.crit = nn.LanguageModelCriterion()
-end
+-- load protos from file
+print('initializing weights from ' .. opt.start_from)
+local loaded_checkpoint = torch.load(opt.start_from)
+protos = loaded_checkpoint.protos
+net_utils.unsanitize_gradients(protos.cnn)
+local lm_modules = protos.lm:getModulesList()
+for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
+protos.crit = nn.LanguageModelCriterion() -- not in checkpoints, create manually
+protos.expander = nn.FeatExpander(opt.seq_per_img) -- not in checkpoints, create manually
 
 -- ship everything to GPU, maybe
 if opt.gpuid >= 0 then
@@ -179,8 +150,109 @@ for k,v in pairs(lm_modules) do net_utils.sanitize_gradients(v) end
 protos.lm:createClones()
 
 collectgarbage() -- "yeah, sure why not"
+
+
 -------------------------------------------------------------------------------
--- Validation evaluation
+--   /$$$$$$$            /$$            /$$$$$$                                         
+--  | $$__  $$          |__/           /$$__  $$                                        
+--  | $$  \ $$  /$$$$$$  /$$ /$$$$$$$ | $$  \__/  /$$$$$$   /$$$$$$   /$$$$$$$  /$$$$$$ 
+--  | $$$$$$$/ /$$__  $$| $$| $$__  $$| $$$$     /$$__  $$ /$$__  $$ /$$_____/ /$$__  $$
+--  | $$__  $$| $$$$$$$$| $$| $$  \ $$| $$_/    | $$  \ $$| $$  \__/| $$      | $$$$$$$$
+--  | $$  \ $$| $$_____/| $$| $$  | $$| $$      | $$  | $$| $$      | $$      | $$_____/
+--  | $$  | $$|  $$$$$$$| $$| $$  | $$| $$      |  $$$$$$/| $$      |  $$$$$$$|  $$$$$$$
+--  |__/  |__/ \_______/|__/|__/  |__/|__/       \______/ |__/       \_______/ \_______/            
+-------------------------------------------------------------------------------
+torch.class('nlp')
+local simple_metric, parent = torch.class('nlp.simple_metric')
+
+function simple_metric:__init()
+end
+
+
+function simple_metric:eval(seq, label)
+	local function seqLen(seq)
+		for i=1, seq:size(1) do
+			if seq[i] == 0 or seq[i] == Zvocab+1 then
+				return i - 1
+			end
+		end
+		return seq:size(1)
+	end
+
+	local function seqMatch(src, label, start, n)
+		start = start - 1
+		local l = seqLen(src)
+		for i=0,l-n do
+			flag = true
+			for j=1,n do
+				if src[i+j] ~= label[start+j] then
+					flag = false
+					break
+				end
+			end
+			if flag then
+				return true
+			end
+		end
+		return false
+	end
+
+	seq = seq:t()
+	label = label:t()
+	local B = seq:size(1)
+	local S = seq:size(2)
+  local gain = torch.Tensor(B)
+	assert(label:size(1) == B * 5 and label:size(2) == S)
+	local n = 2
+	for b=1,B do
+    local count = 0
+    local match = 0
+		for i=1,5 do
+			sent = label[b*5-5+i]
+      -- local vocab = loader:getVocab()
+      -- print('--------------------------------------------')
+      -- print(net_utils.decode_sequence(vocab, seq[b]:reshape(1, 16)))
+      -- print(net_utils.decode_sequence(vocab, sent:reshape(1, 16)))
+			for j=1,seqLen(sent, Zvocab) - n + 1 do
+				if seqMatch(seq[b], sent, j, n) then
+					match = match + 1
+				end
+				count = count + 1
+			end
+		end
+    gain[b] = match / count
+	end
+  return gain
+end
+
+function policy_grad(gain, sample_seq)
+	local B = sample_seq:size(2)
+	local S = sample_seq:size(1)
+  local grad = torch.Tensor(S+2, B, Zvocab + 1):zero():cuda()
+	assert(gain:dim() == 1 and gain:size(1) == B)
+	-- grad:scatter(2, sample_seq, -gain:repeatTensor(S, 1):t())
+  for b=1,B do
+    for s=1,S do
+      local idx = sample_seq[s][b]
+      grad[s+2][b][idx] = - gain[b]
+      if idx == Zvocab+1 then 
+        break
+      end
+    end
+  end
+	return grad:div(B)
+end
+
+local metric = nlp.simple_metric()
+-------------------------------------------------------------------------------
+--   /$$$$$$$$                      /$$       /$$$$$$$$                              
+--  | $$_____/                     | $$      | $$_____/                              
+--  | $$       /$$    /$$  /$$$$$$ | $$      | $$       /$$   /$$ /$$$$$$$   /$$$$$$$
+--  | $$$$$   |  $$  /$$/ |____  $$| $$      | $$$$$   | $$  | $$| $$__  $$ /$$_____/
+--  | $$__/    \  $$/$$/   /$$$$$$$| $$      | $$__/   | $$  | $$| $$  \ $$| $$      
+--  | $$        \  $$$/   /$$__  $$| $$      | $$      | $$  | $$| $$  | $$| $$      
+--  | $$$$$$$$   \  $/   |  $$$$$$$| $$      | $$      |  $$$$$$/| $$  | $$|  $$$$$$$
+--  |________/    \_/     \_______/|__/      |__/       \______/ |__/  |__/ \_______/               
 -------------------------------------------------------------------------------
 local function eval_split(split, evalopt)
   local verbose = utils.getopt(evalopt, 'verbose', true)
@@ -241,7 +313,17 @@ local function eval_split(split, evalopt)
 end
 
 -------------------------------------------------------------------------------
--- Loss function
+--   /$$$$$$$$                     /$$                 /$$$$$$$$                              
+--  |__  $$__/                    |__/                | $$_____/                              
+--     | $$     /$$$$$$   /$$$$$$  /$$ /$$$$$$$       | $$       /$$   /$$ /$$$$$$$   /$$$$$$$
+--     | $$    /$$__  $$ |____  $$| $$| $$__  $$      | $$$$$   | $$  | $$| $$__  $$ /$$_____/
+--     | $$   | $$  \__/  /$$$$$$$| $$| $$  \ $$      | $$__/   | $$  | $$| $$  \ $$| $$      
+--     | $$   | $$       /$$__  $$| $$| $$  | $$      | $$      | $$  | $$| $$  | $$| $$      
+--     | $$   | $$      |  $$$$$$$| $$| $$  | $$      | $$      |  $$$$$$/| $$  | $$|  $$$$$$$
+--     |__/   |__/       \_______/|__/|__/  |__/      |__/       \______/ |__/  |__/ \_______/
+--                                                                                            
+--                                                                                            
+--   
 -------------------------------------------------------------------------------
 local iter = 0
 local function lossFun()
@@ -264,22 +346,32 @@ local function lossFun()
   -- forward the ConvNet on images (most work happens here)
   local feats = protos.cnn:forward(data.images)
   -- we have to expand out image features, once for each sentence
-  local expanded_feats = protos.expander:forward(feats)
-  -- forward the language model
-  local logprobs = protos.lm:forward{expanded_feats, data.labels}
-  -- forward the language model criterion
-  local loss = protos.crit:forward(logprobs, data.labels)
+  local baseline_seq = protos.lm:sample(feats, {beam_size=opt.beam_size,sample_max=1})
+  local baseline_score = metric:eval(baseline_seq, data.labels)
+  -- zeros sth
+  local sample_seq = protos.lm:sample(feats, {beam_size=opt.beam_size,sample_max=0,temperature=1.0})
+  local sample_score = metric:eval(sample_seq, data.labels)
+  -------------------------------------------------------------------------------------
+  -- local vocab = loader:getVocab()
+  -- local baseline_sents = net_utils.decode_sequence(vocab, baseline_seq)
+  -- local sample_sents = net_utils.decode_sequence(vocab, sample_seq)
+  -- for k=1,#baseline_sents do
+  --     print(baseline_sents[k])
+  --     print(sample_sents[k])
+  -- end
+  -------------------------------------------------------------------------------------
+
+  local gain = sample_score - baseline_score
+  print(string.format("%f - %f = %f", sample_score:sum(), baseline_score:sum(), gain:sum()))
+  local dlogprobs = policy_grad(gain, sample_seq)
   
   -----------------------------------------------------------------------------
   -- Backward pass
   -----------------------------------------------------------------------------
-  -- backprop criterion
-  local dlogprobs = protos.crit:backward(logprobs, data.labels)
   -- backprop language model
-  local dexpanded_feats, ddummy = unpack(protos.lm:backward({expanded_feats, data.labels}, dlogprobs))
+  local dfeats, ddummy = unpack(protos.lm:backward({feats, sample_seq}, dlogprobs))
   -- backprop the CNN, but only if we are finetuning
   if opt.finetune_cnn_after >= 0 and iter >= opt.finetune_cnn_after then
-    local dfeats = protos.expander:backward(feats, dexpanded_feats)
     local dx = protos.cnn:backward(data.images, dfeats)
   end
 
@@ -296,12 +388,22 @@ local function lossFun()
   -----------------------------------------------------------------------------
 
   -- and lets get out!
-  local losses = { total_loss = loss }
+  local losses = { total_loss = gain:sum() }
   return losses
 end
 
 -------------------------------------------------------------------------------
--- Main loop
+--   /$$      /$$           /$$                 /$$                                    
+--  | $$$    /$$$          |__/                | $$                                    
+--  | $$$$  /$$$$  /$$$$$$  /$$ /$$$$$$$       | $$        /$$$$$$   /$$$$$$   /$$$$$$ 
+--  | $$ $$/$$ $$ |____  $$| $$| $$__  $$      | $$       /$$__  $$ /$$__  $$ /$$__  $$
+--  | $$  $$$| $$  /$$$$$$$| $$| $$  \ $$      | $$      | $$  \ $$| $$  \ $$| $$  \ $$
+--  | $$\  $ | $$ /$$__  $$| $$| $$  | $$      | $$      | $$  | $$| $$  | $$| $$  | $$
+--  | $$ \/  | $$|  $$$$$$$| $$| $$  | $$      | $$$$$$$$|  $$$$$$/|  $$$$$$/| $$$$$$$/
+--  |__/     |__/ \_______/|__/|__/  |__/      |________/ \______/  \______/ | $$____/ 
+--                                                                           | $$      
+--                                                                           | $$      
+--                                                                           |__/   
 -------------------------------------------------------------------------------
 local loss0
 local optim_state = {}
@@ -412,10 +514,10 @@ while true do
   iter = iter + 1
   if iter % 10 == 0 then collectgarbage() end -- good idea to do this once in a while, i think
   if loss0 == nil then loss0 = losses.total_loss end
-  if losses.total_loss > loss0 * 20 then
-    print('loss seems to be exploding, quitting.')
-    break
-  end
+  -- if losses.total_loss > loss0 * 20 then
+  --   print('loss seems to be exploding, quitting.')
+  --   break
+  -- end
   if opt.max_iters > 0 and iter >= opt.max_iters then break end -- stopping criterion
 
 end
