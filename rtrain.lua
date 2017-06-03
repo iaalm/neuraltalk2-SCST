@@ -38,7 +38,7 @@ cmd:option('-seq_per_img',5,'number of captions to sample for each image during 
 cmd:option('-finetune_cnn_after', -1, 'After what iteration do we start finetuning the CNN? (-1 = disable; never finetune, 0 = finetune from start)')
 -- Optimization: for the Language Model
 cmd:option('-optim','adam','what update to use? rmsprop|sgd|sgdmom|adagrad|adam')
-cmd:option('-learning_rate',4e-4,'learning rate')
+cmd:option('-learning_rate',5e-5,'learning rate')
 cmd:option('-learning_rate_decay_start', -1, 'at what iteration to start decaying learning rate? (-1 = dont)')
 cmd:option('-learning_rate_decay_every', 50000, 'every how many iterations thereafter to drop LR by half?')
 cmd:option('-optim_alpha',0.8,'alpha for adagrad/rmsprop/momentum/adam')
@@ -48,7 +48,7 @@ cmd:option('-optim_epsilon',1e-8,'epsilon that goes into denominator for smoothi
 cmd:option('-cnn_optim','adam','optimization to use for CNN')
 cmd:option('-cnn_optim_alpha',0.8,'alpha for momentum of CNN')
 cmd:option('-cnn_optim_beta',0.999,'alpha for momentum of CNN')
-cmd:option('-cnn_learning_rate',1e-5,'learning rate for the CNN')
+cmd:option('-cnn_learning_rate',1e-6,'learning rate for the CNN')
 cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
 
 -- Evaluation/Checkpointing
@@ -201,28 +201,32 @@ function simple_metric:eval(seq, label)
 	label = label:t()
 	local B = seq:size(1)
 	local S = seq:size(2)
-  local gain = torch.Tensor(B)
+	local gain = torch.Tensor(B)
 	assert(label:size(1) == B * 5 and label:size(2) == S)
 	local n = 4
-  for b=1,B do
-    local count = 0
-    local match = 0
-    for i=1,5 do
-      sent = label[b*5-5+i]
-      -- local vocab = loader:getVocab()
-      -- print('--------------------------------------------')
-      -- print(net_utils.decode_sequence(vocab, seq[b]:reshape(1, 16)))
-      -- print(net_utils.decode_sequence(vocab, sent:reshape(1, 16)))
-      for j=1,seqLen(sent, Zvocab) - n + 1 do
-        if seqMatch(seq[b], sent, j, n) then
-          match = match + 1
-        end
-        count = count + 1
-      end
-    end
-    gain[b] = match / count
-  end
-  return gain:div(B)
+	for b=1,B do
+		local match = 0
+		local count = seqLen(seq[b]) - n + 1
+	    for i=1,count do
+	    	for j=1,5 do
+	    		if seqMatch(label[b*5-5+j], seq[b], i, n) then
+	    			match = match + 1
+	    			break
+	    		end
+	    	end
+	    end
+	    if count == 0 then
+	    	gain[b] = 0
+		else
+			local length_total = 0
+			for j=1,5 do
+	    		length_total = length_total + seqLen(label[b*5-5+j])
+	    	end
+	    	local penalty = math.exp(1 - math.max(1, length_total / seqLen(seq[b]) / 5))
+	    	gain[b] = match / count * penalty
+		end
+	  end
+	  return gain
 end
 
 function policy_grad(gain, sample_seq)
@@ -320,10 +324,7 @@ end
 --     | $$   | $$  \__/  /$$$$$$$| $$| $$  \ $$      | $$__/   | $$  | $$| $$  \ $$| $$      
 --     | $$   | $$       /$$__  $$| $$| $$  | $$      | $$      | $$  | $$| $$  | $$| $$      
 --     | $$   | $$      |  $$$$$$$| $$| $$  | $$      | $$      |  $$$$$$/| $$  | $$|  $$$$$$$
---     |__/   |__/       \_______/|__/|__/  |__/      |__/       \______/ |__/  |__/ \_______/
---                                                                                            
---                                                                                            
---   
+--     |__/   |__/       \_______/|__/|__/  |__/      |__/       \______/ |__/  |__/ \_______/ 
 -------------------------------------------------------------------------------
 local iter = 0
 local function lossFun()
@@ -333,6 +334,8 @@ local function lossFun()
   if opt.finetune_cnn_after >= 0 and iter >= opt.finetune_cnn_after then
     cnn_grad_params:zero()
   end
+  protos.cnn:evaluate()
+  protos.lm:evaluate()
 
   -----------------------------------------------------------------------------
   -- Forward pass
@@ -346,10 +349,10 @@ local function lossFun()
   -- forward the ConvNet on images (most work happens here)
   local feats = protos.cnn:forward(data.images)
   -- we have to expand out image features, once for each sentence
-  local baseline_seq = protos.lm:sample(feats, {beam_size=opt.beam_size,sample_max=1})
+  local baseline_seq = protos.lm:sample(feats, {beam_size=1,sample_max=1})
   local baseline_score = metric:eval(baseline_seq, data.labels)
   -- zeros sth
-  local sample_seq = protos.lm:sample(feats, {beam_size=opt.beam_size,sample_max=0,temperature=1.0})
+  local sample_seq = protos.lm:sample(feats, {beam_size=1,sample_max=0,temperature=0.1})
   local sample_score = metric:eval(sample_seq, data.labels)
   -------------------------------------------------------------------------------------
   -- local vocab = loader:getVocab()
@@ -359,10 +362,9 @@ local function lossFun()
   --     print(baseline_sents[k])
   --     print(sample_sents[k])
   -- end
-  -------------------------------------------------------------------------------------
-
+-------------------------------------------------------------------------------------
   local gain = sample_score - baseline_score
-  print(string.format("%f - %f = %f", sample_score:mean(), baseline_score:mean(), gain:mean()))
+  print(string.format("%f - %f = %f", sample_score:mean()*100, baseline_score:mean()*100, gain:mean()*100))
   local dlogprobs = policy_grad(gain, sample_seq)
   
   -----------------------------------------------------------------------------
