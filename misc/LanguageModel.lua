@@ -136,6 +136,7 @@ function layer:sample(imgs, opt)
   local seq = torch.LongTensor(self.seq_length, batch_size):zero()
   local seqLogprobs = torch.FloatTensor(self.seq_length, batch_size)
   local logprobs -- logprobs predicted in last time step
+  local outLogprobs = torch.FloatTensor(self.seq_length, batch_size, self.vocab_size + 1)
   for t=1,self.seq_length+2 do
 
     local xt, it, sampleLogprobs
@@ -173,6 +174,7 @@ function layer:sample(imgs, opt)
     if t >= 3 then 
       seq[t-2] = it -- record the samples
       seqLogprobs[t-2] = sampleLogprobs:view(-1):float() -- and also their log likelihoods
+      outLogprobs[{ {t-2},{},{} }] = logprobs:float()
     end
 
     self.inputs[t] = {xt,unpack(state)}
@@ -184,7 +186,7 @@ function layer:sample(imgs, opt)
   end
 
   -- return the samples and their log likelihoods
-  return seq, seqLogprobs
+  return seq, outLogprobs
 end
 
 --[[

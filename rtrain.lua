@@ -24,7 +24,7 @@ cmd:text('Options')
 cmd:option('-input_h5','/s/coco/cocotalk.h5','path to the h5file containing the preprocessed dataset')
 cmd:option('-input_val','annotations/captions_val2014.json','path to the json file containing caption for val')
 cmd:option('-input_json','/s/coco/cocotalk.json','path to the json file containing additional info and vocab')
-cmd:option('-start_from', 'model_.t7', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
+cmd:option('-start_from', '../../model_.t7', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
 
 -- Model settings
 cmd:option('-rnn_size',512,'size of the rnn in number of hidden nodes in each layer')
@@ -38,7 +38,7 @@ cmd:option('-seq_per_img',5,'number of captions to sample for each image during 
 cmd:option('-finetune_cnn_after', -1, 'After what iteration do we start finetuning the CNN? (-1 = disable; never finetune, 0 = finetune from start)')
 -- Optimization: for the Language Model
 cmd:option('-optim','adam','what update to use? rmsprop|sgd|sgdmom|adagrad|adam')
-cmd:option('-learning_rate',5e-5,'learning rate')
+cmd:option('-learning_rate',1e-5,'learning rate')
 cmd:option('-learning_rate_decay_start', -1, 'at what iteration to start decaying learning rate? (-1 = dont)')
 cmd:option('-learning_rate_decay_every', 50000, 'every how many iterations thereafter to drop LR by half?')
 cmd:option('-optim_alpha',0.8,'alpha for adagrad/rmsprop/momentum/adam')
@@ -53,14 +53,14 @@ cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
 
 -- Evaluation/Checkpointing
 cmd:option('-val_images_use', 3200, 'how many images to use when periodically evaluating the validation loss? (-1 = all)')
-cmd:option('-save_checkpoint_every', 500, 'how often to save a model checkpoint?')
+cmd:option('-save_checkpoint_every', 2500, 'how often to save a model checkpoint?')
 cmd:option('-checkpoint_path', '', 'folder to save checkpoints into (empty = this folder)')
 cmd:option('-language_eval', 1, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
 cmd:option('-losses_log_every', 25, 'How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')
 
 -- misc
 cmd:option('-backend', 'cudnn', 'nn|cudnn')
-cmd:option('-id', 'pg', 'an id identifying this run/job. used in cross-val and appended when writing progress files')
+cmd:option('-id', '', 'an id identifying this run/job. used in cross-val and appended when writing progress files')
 cmd:option('-seed', 123, 'random number generator seed to use')
 cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
 
@@ -229,7 +229,30 @@ function simple_metric:eval(seq, label)
 	  return gain
 end
 
-function policy_grad(gain, sample_seq)
+function policy_grad(gain, sample_seq, log_prob)
+  local prob = torch.exp(log_prob)
+	local B = sample_seq:size(2)
+	local S = sample_seq:size(1)
+  local V = log_prob:size(3)
+  local grad = torch.FloatTensor(S+2, B, V)
+  grad[{{2,1+S},{},{}}] = prob
+  grad[{{1},{},{}}] = 0
+  grad[{{S+2},{},{}}] = 0
+	assert(gain:dim() == 1 and gain:size(1) == B)
+  for b=1,B do
+    for s=1,S do
+      local idx = sample_seq[s][b]
+      grad[s+1][b][idx] = grad[s+1][b][idx] - 1
+      if idx == Zvocab+1 then 
+        break
+      end
+    end
+  end
+  local gain_mask = gain:repeatTensor(S+2, V, 1):transpose(2,3)
+	return grad:cmul(gain_mask):div(B)
+
+end
+function policy_grad_old(gain, sample_seq)
 	local B = sample_seq:size(2)
 	local S = sample_seq:size(1)
   local grad = torch.Tensor(S+2, B, Zvocab + 1):zero():cuda()
@@ -352,7 +375,7 @@ local function lossFun()
   local baseline_seq = protos.lm:sample(feats, {beam_size=1,sample_max=1})
   local baseline_score = metric:eval(baseline_seq, data.labels)
   -- zeros sth
-  local sample_seq = protos.lm:sample(feats, {beam_size=1,sample_max=0,temperature=0.1})
+  local sample_seq, log_prob = protos.lm:sample(feats, {beam_size=1,sample_max=0,temperature=0.1})
   local sample_score = metric:eval(sample_seq, data.labels)
   -------------------------------------------------------------------------------------
   -- local vocab = loader:getVocab()
@@ -365,7 +388,8 @@ local function lossFun()
 -------------------------------------------------------------------------------------
   local gain = sample_score - baseline_score
   print(string.format("%f - %f = %f", sample_score:mean()*100, baseline_score:mean()*100, gain:mean()*100))
-  local dlogprobs = policy_grad(gain, sample_seq)
+  local dlogprobs = policy_grad(gain, sample_seq, log_prob)
+  if opt.gpuid >= 0 then dlogprobs = dlogprobs:cuda() end
   
   -----------------------------------------------------------------------------
   -- Backward pass
