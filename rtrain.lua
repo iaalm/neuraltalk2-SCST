@@ -238,7 +238,7 @@ function policy_grad(gain, sample_seq)
   for b=1,B do
     for s=1,S do
       local idx = sample_seq[s][b]
-      grad[s+2][b][idx] = - gain[b]
+      grad[s+1][b][idx] = - gain[b]
       if idx == Zvocab+1 then 
         break
       end
