@@ -229,6 +229,71 @@ function simple_metric:eval(seq, label)
 	  return gain
 end
 
+local bleu_metric, parent = torch.class('nlp.bleu_metric')
+function bleu_metric:__init(n)
+  self.n = n
+end
+
+function bleu_metric:eval(seq, label)
+  local eos = loader:getVocabSize() + 1
+	local function seqLen(seq)
+		for i=1, seq:size(1) do
+			if seq[i] == 0 or seq[i] == eos then
+				return i - 1
+			end
+		end
+		return seq:size(1)
+  end
+  local function seqMatch(seq, ref)
+    local n = seq:size(1)
+    local l = seqLen(ref)
+    local count = 0
+    for i=1,l-n+1 do
+      if seq:equal(ref[{{i, i+n-1}}]) then
+        count = count + 1
+      end
+    end
+    local vocab = loader:getVocab()
+    -- print(count)
+    -- print(net_utils.decode_sequence(vocab, seq:reshape(n,1)))
+    -- print(net_utils.decode_sequence(vocab, ref:reshape(ref:size(1), 1)))
+    return count
+  end
+  -- local vocab = loader:getVocab()
+  -- print(net_utils.decode_sequence(vocab, seq))
+  -- print(net_utils.decode_sequence(vocab, label))
+	seq = seq:t()
+	label = label:t()
+	local B = seq:size(1)
+	local S = seq:size(2)
+	local gain = torch.Tensor(B)
+	assert(label:size(1) == B * 5 and label:size(2) == S)
+  for b=1,B do
+    local bleu = 1
+    local bleus = {}
+    for n=1,self.n do
+      local l = seqLen(seq[b])
+      local guess = 0
+      local correct = 0
+      for i=1,l-n+1 do
+        local self_count = seqMatch(seq[{b, {i,i+n-1}}], seq[b])
+        local max_count = 0
+        for j=1,5 do
+          local c = seqMatch(seq[{b, {i,i+n-1}}], label[b*5+j-5])
+          if c > max_count then max_count = c end
+        end
+        guess = guess + 1 / self_count
+        correct = correct + math.min(max_count, self_count) / self_count / self_count
+      end
+      bleu = bleu * correct / guess
+      table.insert(bleus, math.pow(bleu, 1/n))
+    end
+    gain[b] = math.pow(bleu, 1/self.n)
+  end
+  return gain
+end
+
+
 function policy_grad(gain, sample_seq, log_prob)
   local prob = torch.exp(log_prob)
 	local B = sample_seq:size(2)
@@ -270,7 +335,7 @@ function policy_grad_old(gain, sample_seq)
 	return grad:div(B)
 end
 
-local metric = nlp.simple_metric()
+local metric = nlp.bleu_metric(4)
 -------------------------------------------------------------------------------
 --   /$$$$$$$$                      /$$       /$$$$$$$$                              
 --  | $$_____/                     | $$      | $$_____/                              
@@ -387,7 +452,7 @@ local function lossFun()
   -- end
 -------------------------------------------------------------------------------------
   local gain = sample_score - baseline_score
-  print(string.format("%f - %f = %f", sample_score:mean()*100, baseline_score:mean()*100, gain:mean()*100))
+  -- print(string.format("%f - %f = %f", sample_score:mean()*100, baseline_score:mean()*100, gain:mean()*100))
   local dlogprobs = policy_grad(gain, sample_seq, log_prob)
   if opt.gpuid >= 0 then dlogprobs = dlogprobs:cuda() end
   
@@ -414,7 +479,7 @@ local function lossFun()
   -----------------------------------------------------------------------------
 
   -- and lets get out!
-  local losses = { total_loss = gain:mean() }
+  local losses = { total_loss = gain:mean()*100 }
   return losses
 end
 
