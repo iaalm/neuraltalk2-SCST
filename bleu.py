@@ -1,5 +1,12 @@
 import json
+import math
 from functools import reduce
+
+# Compute BLEU
+# SiMon
+# Note there are two main differen with coco-caption
+# 1. While compute reflen, we use "shorest" policy rather than "closest"
+# 2. only tokenize sentences only by space which is different Stanford NLP
 
 ref_file = 'coco-caption/annotations/captions_val2014.json'
 input_file = 'coco-caption/val.json'
@@ -48,22 +55,33 @@ with open(input_file) as fd:
 
 bleus = [0] * 4
 for bleu_n in range(1, 5):
-    res_total = 0
-    res_acc = 0
+    res_success = 0
+    res_guess = 0
+    inputLen = 0
+    refLen = 0
     for i in input_sen:
         img_id = i['image_id']
         if img_id in ref_dict:
+            inputLen += len(i['caption'].split())
+            # use "shorest" here
+            # different from default "closest" in coco-caption
+            refLen += reduce(lambda x, y: min(x, y),
+                             [len(i) for i in ref_dict[img_id]])
             ref_count = max_count(ref_dict[img_id], bleu_n)
-            input_count = max_count([i['caption'].split()], bleu_n)
-            guess_list = [min(ref_count.get(i, 0), input_count[i])
-                          for i in input_count]
-            res_total += 1
+            guess_count = max_count([i['caption'].split()], bleu_n)
+            success_list = [min(ref_count.get(i, 0), guess_count[i])
+                            for i in guess_count]
             # print(guess_list, input_count)
             # print(reduce(lambda x, y: x+y, guess_list))
             # print(reduce(lambda x, y: x + y, input_count.values()))
-            res_acc += reduce(lambda x, y: x+y, guess_list) \
-                / reduce(lambda x, y: x + y, input_count.values())
-    bleus[bleu_n - 1] = res_acc / res_total
+            res_success += reduce(lambda x, y: x+y, success_list)
+            res_guess += reduce(lambda x, y: x + y, guess_count.values())
+    print('guess', res_guess)
+    print('success', res_success)
+    bleus[bleu_n - 1] = res_success / res_guess \
+        * math.exp(min(0, 1 - refLen/inputLen))
+print('testlen:', inputLen)
+print('reflen:', refLen)
 bleu = 1
 for i in range(4):
     bleu *= bleus[i]
