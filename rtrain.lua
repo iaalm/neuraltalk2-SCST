@@ -38,9 +38,9 @@ cmd:option('-seq_per_img',5,'number of captions to sample for each image during 
 cmd:option('-finetune_cnn_after', -1, 'After what iteration do we start finetuning the CNN? (-1 = disable; never finetune, 0 = finetune from start)')
 -- Optimization: for the Language Model
 cmd:option('-optim','adam','what update to use? rmsprop|sgd|sgdmom|adagrad|adam')
-cmd:option('-learning_rate',1e-5,'learning rate')
-cmd:option('-learning_rate_decay_start', -1, 'at what iteration to start decaying learning rate? (-1 = dont)')
-cmd:option('-learning_rate_decay_every', 50000, 'every how many iterations thereafter to drop LR by half?')
+cmd:option('-learning_rate',5e-5,'learning rate')
+cmd:option('-learning_rate_decay_start', 0, 'at what iteration to start decaying learning rate? (-1 = dont)')
+cmd:option('-learning_rate_decay_every', 10000, 'every how many iterations thereafter to drop LR by half?')
 cmd:option('-optim_alpha',0.8,'alpha for adagrad/rmsprop/momentum/adam')
 cmd:option('-optim_beta',0.999,'beta used for adam')
 cmd:option('-optim_epsilon',1e-8,'epsilon that goes into denominator for smoothing')
@@ -53,7 +53,7 @@ cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
 
 -- Evaluation/Checkpointing
 cmd:option('-val_images_use', 3200, 'how many images to use when periodically evaluating the validation loss? (-1 = all)')
-cmd:option('-save_checkpoint_every', 2500, 'how often to save a model checkpoint?')
+cmd:option('-save_checkpoint_every', 500, 'how often to save a model checkpoint?')
 cmd:option('-checkpoint_path', '', 'folder to save checkpoints into (empty = this folder)')
 cmd:option('-language_eval', 1, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
 cmd:option('-losses_log_every', 25, 'How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')
@@ -239,7 +239,8 @@ function bleu_metric:eval(seq, label)
 	local function seqLen(seq)
 		for i=1, seq:size(1) do
 			if seq[i] == 0 or seq[i] == eos then
-				return i - 1
+        seq[i] = eos
+				return i
 			end
 		end
 		return seq:size(1)
@@ -255,8 +256,8 @@ function bleu_metric:eval(seq, label)
     end
     local vocab = loader:getVocab()
     -- print(count)
-    -- print(net_utils.decode_sequence(vocab, seq:reshape(n,1)))
-    -- print(net_utils.decode_sequence(vocab, ref:reshape(ref:size(1), 1)))
+    -- print(net_utils.decode_sequence(vocab, seq:reshape(n,1))[1])
+    -- print(net_utils.decode_sequence(vocab, ref:reshape(ref:size(1), 1))[1])
     return count
   end
   -- local vocab = loader:getVocab()
@@ -273,17 +274,21 @@ function bleu_metric:eval(seq, label)
     local bleus = {}
     for n=1,self.n do
       local l = seqLen(seq[b])
-      local guess = 0
-      local correct = 0
+      local guess = 1e-8
+      local correct = 1e-12
       for i=1,l-n+1 do
         local self_count = seqMatch(seq[{b, {i,i+n-1}}], seq[b])
         local max_count = 0
+        local ref_min_len = 100
         for j=1,5 do
+          local ref_len = seqLen(label[b*5+j-5])
+          if ref_len < ref_min_len then ref_min_len = ref_len end
           local c = seqMatch(seq[{b, {i,i+n-1}}], label[b*5+j-5])
           if c > max_count then max_count = c end
         end
+        assert(self_count >= 1)
         guess = guess + 1 / self_count
-        correct = correct + math.min(max_count, self_count) / self_count / self_count
+        correct = correct + math.min(max_count, self_count) / self_count / self_count * math.exp(math.min(0, 1 - ref_min_len/l))
       end
       bleu = bleu * correct / guess
       table.insert(bleus, math.pow(bleu, 1/n))
@@ -300,21 +305,28 @@ function policy_grad(gain, sample_seq, log_prob)
 	local S = sample_seq:size(1)
   local V = log_prob:size(3)
   local grad = torch.FloatTensor(S+2, B, V)
+  local n = 0
   grad[{{2,1+S},{},{}}] = prob
   grad[{{1},{},{}}] = 0
   grad[{{S+2},{},{}}] = 0
 	assert(gain:dim() == 1 and gain:size(1) == B)
   for b=1,B do
-    for s=1,S do
-      local idx = sample_seq[s][b]
+    for s=1,S+1 do
+      local idx
+      if s > S then 
+        idx = Zvocab+1
+      else
+        idx = sample_seq[s][b]
+      end
       grad[s+1][b][idx] = grad[s+1][b][idx] - 1
+      n = n + 1
       if idx == Zvocab+1 then 
         break
       end
     end
   end
   local gain_mask = gain:repeatTensor(S+2, V, 1):transpose(2,3)
-	return grad:cmul(gain_mask):div(B)
+	return grad:cmul(gain_mask):div(n)
 
 end
 function policy_grad_old(gain, sample_seq)
@@ -422,8 +434,6 @@ local function lossFun()
   if opt.finetune_cnn_after >= 0 and iter >= opt.finetune_cnn_after then
     cnn_grad_params:zero()
   end
-  protos.cnn:evaluate()
-  protos.lm:evaluate()
 
   -----------------------------------------------------------------------------
   -- Forward pass
@@ -479,7 +489,7 @@ local function lossFun()
   -----------------------------------------------------------------------------
 
   -- and lets get out!
-  local losses = { total_loss = gain:mean()*100 }
+  local losses = { total_loss = gain:mean()*100, sample_loss = sample_score:mean() * 100 }
   return losses
 end
 
@@ -503,12 +513,15 @@ local loss_history = {}
 local val_lang_stats_history = {}
 local val_loss_history = {}
 local best_score
+local smooth_loss = 0
 while true do  
 
   -- eval loss/gradient
   local losses = lossFun()
+  if smooth_loss == 0 then smooth_loss = losses.sample_loss end
+  smooth_loss = losses.sample_loss * 0.01 + smooth_loss * 0.99
   if iter % opt.losses_log_every == 0 then loss_history[iter] = losses.total_loss end
-  print(string.format('iter %d: %f', iter, losses.total_loss))
+  print(string.format('iter %5d: %7.3f | avg: %7.3f', iter, losses.total_loss, smooth_loss))
 
   -- save checkpoint once in a while (or on final iteration)
   if (iter % opt.save_checkpoint_every == 0 or iter == opt.max_iters) then
